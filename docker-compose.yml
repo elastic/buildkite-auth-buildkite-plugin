@@ -1,0 +1,22 @@
+services:
+  plugin-lint:
+    image: buildkite/plugin-linter:v3.0.0
+    command: ['--id', 'elastic/buildkite-auth', '--path', '/plugin']
+    volumes:
+      - ".:/plugin:ro"
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ".:/plugin:ro"
+    command: ['bats', 'tests/unit']
+
+  shellcheck:
+    image: koalaman/shellcheck-alpine:v0.11.0
+    entrypoint: ["sh", "-c"]
+    command: ["find hooks -type f -exec shellcheck --shell=bash --external-sources --format=gcc {} +"]
+    working_dir: /plugin
+    volumes:
+      - ".:/plugin:ro"

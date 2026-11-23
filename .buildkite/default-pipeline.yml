@@ -1,14 +1,13 @@
----
-# $yaml-language-server: $schema=https://raw.githubusercontent.com/buildkite/pipeline-schema/main/schema.json
+agents:
+  provider: gcp
+  image: family/core-ubuntu-2204
+
 steps:
-  - label: "Build"
-    command: "true"
+  - label: ":test_tube: Unit Tests"
+    command: make test
 
-  - label: "Test"
-    command: "true"
+  - label: ":lint-roller: Plugin Lint"
+    command: make plugin-lint
 
-  - label: "Deploy"
-    command: "true"
-
-  - label: "Publish"
-    command: "true"
+  - label: ":shell: ShellCheck"
+    command: make shellcheck

@@ -1,0 +1,29 @@
+name: Buildkite Auth
+description: Authenticate to the Buildkite REST API using workload identity federation
+author: https://github.com/elastic
+public: true
+requirements:
+  - bash
+  - buildkite-agent
+  - curl
+  - jq
+configuration:
+  properties:
+    client-id:
+      type: string
+      minLength: 1
+    audience:
+      type: string
+      minLength: 1
+    scope:
+      type: string
+    lifetime:
+      type: integer
+      minimum: 1
+      maximum: 3600
+    env-var:
+      type: string
+      pattern: '^[A-Za-z_][A-Za-z0-9_]*$'
+  required:
+    - client-id
+  additionalProperties: false
