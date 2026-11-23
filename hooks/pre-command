@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+client_id="${BUILDKITE_PLUGIN_BUILDKITE_AUTH_CLIENT_ID:?client-id is required}"
+# Default audience is unique to the elastic Buildkite organization
+audience="${BUILDKITE_PLUGIN_BUILDKITE_AUTH_AUDIENCE:-"https://api.buildkite.com/v2/organizations/e0f3970e-3a75-4621-919f-e6c773e2bb12"}"
+scope="${BUILDKITE_PLUGIN_BUILDKITE_AUTH_SCOPE:-}"
+lifetime="${BUILDKITE_PLUGIN_BUILDKITE_AUTH_LIFETIME:-3600}"
+env_var="${BUILDKITE_PLUGIN_BUILDKITE_AUTH_ENV_VAR:-BUILDKITE_API_TOKEN}"
+token_endpoint="https://buildkite.com/oauth/token"
+
+if [[ ! "${env_var}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+  echo "^^^ +++"
+  echo "Invalid env-var name: ${env_var}"
+  exit 1
+fi
+
+echo "~~~ :buildkite: Requesting OIDC token from Buildkite"
+oidc_token=$(buildkite-agent oidc request-token --audience "${audience}" --lifetime "${lifetime}")
+
+echo "~~~ :buildkite: Exchanging OIDC token for a Buildkite API token"
+curl_args=(
+  -sS
+  -d "grant_type=client_credentials"
+  -d "client_id=${client_id}"
+  -d "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+  -d "client_assertion=${oidc_token}"
+)
+if [ -n "${scope}" ]; then
+  curl_args+=(-d "scope=${scope}")
+fi
+response=$(curl "${curl_args[@]}" "${token_endpoint}")
+
+access_token=$(echo "$response" | jq -r '.access_token // ""' 2>/dev/null || true)
+
+if [ -z "${access_token}" ]; then
+  echo "^^^ +++"
+  echo "Failed to exchange the OIDC token for a Buildkite API token:"
+  echo "${response}"
+  exit 1
+fi
+
+buildkite-agent redactor add <<< "${access_token}" || true
+
+echo "Buildkite API token exported as ${env_var} (expires in $(echo "$response" | jq -r '.expires_in // "?"')s, scope: $(echo "$response" | jq -r '.scope // "?"'))"
+export "${env_var}=${access_token}"

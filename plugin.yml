@@ -1,0 +1,24 @@
+name: buildkite-auth
+description: Grant pipelines access to the Buildkite REST API using Workload Identity Federation
+author: https://github.com/elastic
+public: true
+requirements:
+  - bash
+  - buildkite-agent
+  - curl
+  - jq
+configuration:
+  properties:
+    client-id:
+      type: string
+    audience:
+      type: string
+    scope:
+      type: string
+    lifetime:
+      type: number
+    env-var:
+      type: string
+  required:
+    - client-id
+  additionalProperties: false

@@ -1,0 +1,20 @@
+name: release-drafter
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  update-release-draft:
+    permissions:
+      contents: write
+      pull-requests: read
+    runs-on: ubuntu-slim
+    steps:
+      - uses: release-drafter/release-drafter@c345907820e0396f6f44bcfd9ac4763325f8feb0 # v7.8.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

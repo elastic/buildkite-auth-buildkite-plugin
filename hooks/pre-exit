@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+unset "${BUILDKITE_PLUGIN_BUILDKITE_AUTH_ENV_VAR:-BUILDKITE_API_TOKEN}"
