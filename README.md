@@ -200,7 +200,26 @@ plugin subsequently replaces the environment variable for the command.
    after the migration and all remaining dependencies have been validated.
 
 This repository provides the plugin and migration guidance, not a production
-rollout, workload identity provisioning, or a live WIF verification.
+rollout or workload identity provisioning.
+
+## End-to-end test
+
+The default Buildkite pipeline includes a live test on `main`. It loads
+`elastic/buildkite-auth` at the build commit, exchanges an agent OIDC token,
+and uses the resulting API token to list Test Engine suites. The non-secret
+`BUILDKITE_WIF_CLIENT_ID` is set in `.buildkite/pipeline.yml`.
+
+Before enabling it, create a Buildkite pipeline for this repository and have an
+administrator configure a separate Buildkite Agents workload identity. Restrict
+its trust to that pipeline, `refs/heads/main`, and step `e2e-buildkite-auth`,
+including the organization and pipeline ID claims. Grant `read_suites` and
+access to the intended test suites. The identity's audience must match the
+plugin's Elastic default. Enable the test only in a protected pipeline whose
+`main` branch is trusted. The list can be empty when no suites are granted, so a
+successful request alone does not prove access to a particular suite.
+
+The test does not run on pull requests or other branches. A skipped step is not
+evidence that a live exchange succeeded.
 
 ## References and contributing
 

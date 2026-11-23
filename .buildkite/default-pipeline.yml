@@ -11,3 +11,20 @@ steps:
 
   - label: ":shell: ShellCheck"
     command: make shellcheck
+
+  - label: ":buildkite: E2E workload identity authentication"
+    key: e2e-buildkite-auth
+    if: 'build.branch == "main" && build.pull_request.id == null'
+    plugins:
+      - elastic/buildkite-auth#${BUILDKITE_COMMIT}:
+          client-id: "${BUILDKITE_WIF_CLIENT_ID}"
+          scope: read_suites
+          env-var: BUILDKITE_AUTH_E2E_TOKEN
+    command: |
+      set +x
+      set -euo pipefail
+      curl -q --fail --silent --show-error \
+        -H "Authorization: Bearer $${BUILDKITE_AUTH_E2E_TOKEN}" \
+        "https://api.buildkite.com/v2/analytics/organizations/$${BUILDKITE_ORGANIZATION_SLUG}/suites" |
+        jq -e 'type == "array"' > /dev/null
+      echo "Authenticated to the Test Engine suites API"
