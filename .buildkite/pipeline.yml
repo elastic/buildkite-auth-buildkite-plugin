@@ -1,5 +1,8 @@
 ---
 # $yaml-language-server: $schema=https://raw.githubusercontent.com/buildkite/pipeline-schema/main/schema.json
+env:
+  BUILDKITE_WIF_CLIENT_ID: "253b0ced5173fa9b4d95"
+
 steps:
 
   # if our Renovate configuration is amended, then make sure we have well-formed config
