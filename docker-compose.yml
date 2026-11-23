@@ -1,6 +1,6 @@
 services:
   plugin-lint:
-    image: buildkite/plugin-linter:v3.0.0
+    image: buildkite/plugin-linter:v3.2.0@sha256:4da0d814b0388f838f69eee0516b3dd8fad38d3d96f5b5a09e94b2dd0a61944d
     command: ['--id', 'elastic/buildkite-auth', '--path', '/plugin']
     volumes:
       - ".:/plugin:ro"

@@ -118,7 +118,7 @@ steps:
         -H "Authorization: Bearer $$BUILDKITE_TOKEN_SECRET" \
         "https://api.buildkite.com/v2/organizations/YOUR_ORG_SLUG/pipelines/TARGET_PIPELINE_SLUG/builds"
     plugins:
-      - elastic/buildkite-auth#ec2bf76f2d21b819c818a6329bee2968705b5dd6:
+      - elastic/buildkite-auth#v0.1.0:
           client-id: "YOUR_WORKLOAD_IDENTITY_CLIENT_ID"
           audience: "YOUR_WORKLOAD_IDENTITY_AUDIENCE"
           scope: "read_builds"
