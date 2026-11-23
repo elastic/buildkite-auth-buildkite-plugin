@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+
+set +x
+set -euo pipefail
+
+client_id="${BUILDKITE_PLUGIN_BUILDKITE_AUTH_CLIENT_ID:-}"
+audience="${BUILDKITE_PLUGIN_BUILDKITE_AUTH_AUDIENCE:-https://api.buildkite.com/v2/organizations/e0f3970e-3a75-4621-919f-e6c773e2bb12}"
+scope="${BUILDKITE_PLUGIN_BUILDKITE_AUTH_SCOPE:-}"
+lifetime="${BUILDKITE_PLUGIN_BUILDKITE_AUTH_LIFETIME:-3600}"
+env_var="${BUILDKITE_PLUGIN_BUILDKITE_AUTH_ENV_VAR:-BUILDKITE_API_TOKEN}"
+
+if [[ -z "$client_id" ]]; then
+  echo "buildkite-auth: client-id is required" >&2
+  exit 1
+fi
+if [[ ! "$env_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+  echo "buildkite-auth: invalid env-var name" >&2
+  exit 1
+fi
+if [[ ! "$lifetime" =~ ^[1-9][0-9]{0,3}$ ]] || (( lifetime > 3600 )); then
+  echo "buildkite-auth: lifetime must be an integer from 1 to 3600 seconds" >&2
+  exit 1
+fi
+
+echo "~~~ :buildkite: Requesting OIDC token"
+if ! oidc_token=$(BUILDKITE_AGENT_DEBUG_HTTP=false BUILDKITE_AGENT_OIDC_REQUEST_TOKEN_SKIP_TOKEN_REDACTION=false \
+  buildkite-agent oidc request-token --audience "$audience" --lifetime "$lifetime" 2>/dev/null) || [[ -z "$oidc_token" ]]; then
+  echo "buildkite-auth: failed to request an OIDC token" >&2
+  exit 1
+fi
+
+echo "~~~ :buildkite: Exchanging OIDC token for an API token"
+curl_args=(
+  -q --silent --show-error --fail
+  --data-urlencode "grant_type=client_credentials"
+  --data-urlencode "client_id=$client_id"
+  --data-urlencode "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+  --data-urlencode "client_assertion@-"
+)
+if [[ -n "$scope" ]]; then
+  curl_args+=(--data-urlencode "scope=$scope")
+fi
+if ! response=$(printf '%s' "$oidc_token" | curl "${curl_args[@]}" https://buildkite.com/oauth/token 2>/dev/null); then
+  echo "buildkite-auth: token exchange failed" >&2
+  exit 1
+fi
+unset oidc_token
+
+if ! access_token=$(printf '%s' "$response" | jq -ser '
+  select(length == 1) | .[0].access_token |
+  select(type == "string" and length > 0 and (test("[[:space:][:cntrl:]]") | not))
+' 2>/dev/null); then
+  echo "buildkite-auth: token exchange returned an invalid or missing access token" >&2
+  exit 1
+fi
+unset response
+
+if ! printf '%s' "$access_token" | BUILDKITE_AGENT_DEBUG_HTTP=false BUILDKITE_AGENT_REDACT_VARS_FILTER=false \
+  buildkite-agent redactor add --format none >/dev/null 2>&1; then
+  echo "buildkite-auth: failed to register the API token for redaction" >&2
+  exit 1
+fi
+
+export "$env_var=$access_token"
+echo "Buildkite API token exported"
