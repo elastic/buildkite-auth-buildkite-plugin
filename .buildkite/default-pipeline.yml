@@ -14,7 +14,6 @@ steps:
 
   - label: ":buildkite: E2E workload identity authentication"
     key: e2e-buildkite-auth
-    if: 'build.branch == "main" && build.pull_request.id == null'
     plugins:
       - elastic/buildkite-auth#${BUILDKITE_COMMIT}:
           client-id: "${BUILDKITE_WIF_CLIENT_ID}"
