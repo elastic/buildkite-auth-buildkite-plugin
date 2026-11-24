@@ -34,7 +34,7 @@ make shellcheck   # ShellCheck on hooks/
 - Register the token with `buildkite-agent redactor add` before exporting it.
   Fail closed on every error; never fall back to a stored credential.
 - For any option change, update `plugin.yml`, the hook (defaults **and**
-  validation), BATS tests, and the README **Configuration** table together.
+  validation), BATS tests, and the README **Configuration** section together.
   Options map to `BUILDKITE_PLUGIN_BUILDKITE_AUTH_<OPTION>` (upper-case, `-` →
   `_`).
 - Failure-path tests must assert the `buildkite-auth:` error message and
