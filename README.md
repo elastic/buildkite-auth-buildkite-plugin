@@ -1,122 +1,49 @@
-# Authenticate to the Buildkite API from Buildkite
+# Buildkite Auth Buildkite Plugin
 
-Buildkite plugin that exchanges a job's OIDC token for a short-lived Buildkite
-REST API token using [Workload Identity Federation (WIF)](https://buildkite.com/docs/apis/workload-identity-federation).
-It exports the token for the job's command, without requiring a stored API token.
+A [Buildkite plugin](https://buildkite.com/docs/plugins) that exchanges a job's
+agent OIDC token for a short-lived Buildkite REST API token using
+[Workload Identity Federation (WIF)](https://buildkite.com/docs/apis/workload-identity-federation),
+and exports it to the job's command. No stored API token is required.
 
-**No plugin release exists yet.** The example pins the existing implementation
-commit, not a release tag. Review and pin an approved commit before adoption;
-do not assume an illustrative version such as `v1.0.0` has been published.
+An organization administrator must first create a **Buildkite Agents** workload
+identity; see [Administrator setup](#administrator-setup).
 
-This README is for **plugin users and administrators**. Contributors should
-read [CONTRIBUTING.md](CONTRIBUTING.md).
+## Quick start
 
-## Prerequisites
+### Minimal
 
-- WIF enabled for your Buildkite organization. It is currently an Enterprise
-  **private preview**; contact Buildkite Support for access.
-- A separate, administrator-created **Buildkite Agents** workload identity,
-  configured as described below. An existing AWS or Google authentication
-  identity is not a substitute.
-- An agent with Bash, `curl`, `jq`, and `buildkite-agent` on its hook PATH.
-  The agent must support `oidc request-token` with `--audience` and `--lifetime`,
-  and `redactor add --format none`.
-- Network access from the agent to the Buildkite agent API and
-  `https://buildkite.com/oauth/token`, and from the consuming command to
-  `https://api.buildkite.com`. Configured IP allowlists must permit both token
-  exchange and API usage.
-
-## Administrator setup
-
-The plugin does not create workload identities, grant access, or revoke old
-credentials. An organization administrator must configure these independently in
-[Workload Identities](https://buildkite.com/organizations/~/workload-identities).
-
-### Trust the source job
-
-Create a new workload identity with **Provider: Buildkite Agents**.
-Set the issuer to `https://agent.buildkite.com`, and copy the identity's
-**Client ID** and **OIDC audience** for plugin configuration.
-
-Restrict the trust policy to the pipeline that **runs the consuming job** (the
-source pipeline), its intended branch, and step. For the `read-target-builds`
-step on `main`, use this OIDC subject with your source organization's and
-pipeline's slugs substituted:
-
-```text
-organization:YOUR_ORG_SLUG:pipeline:SOURCE_PIPELINE_SLUG:ref:refs/heads/main:commit:*:step:read-target-builds
-```
-
-In **Claims**, require the actual source organization's UUID:
-
-```json
-{
-  "organization_id": "00000000-0000-4000-8000-000000000001"
-}
-```
-
-In **Claim conditions**, additionally require the source pipeline's UUID,
-branch, and step key:
-
-```text
-claims.pipeline_id == "00000000-0000-4000-8000-000000000002"
-  && claims.build_branch == "main"
-  && claims.step_key == "read-target-builds"
-```
-
-The UUIDs above are placeholders. Prefer immutable IDs over slugs in claim
-checks; slugs can be renamed and reused. All Buildkite organizations share the
-agent issuer, so Buildkite requires `organization_id` or `organization_slug` in
-**Claims**. Do not remove that organization restriction or broaden the subject
-to every pipeline. Protect the source pipeline's code and configuration from
-untrusted changes.
-
-The example assumes the agent's default compound OIDC subject; do not override
-it through `BUILDKITE_OIDC_TOKEN_SUBJECT_CLAIM`. This plugin does not request
-optional claims such as `queue_key`, so do not require them in this policy.
-
-### Grant access to target resources
-
-Trust and resource access answer different questions:
-
-| Setting | What it controls |
-| --- | --- |
-| Trust policy | Which source jobs may mint tokens. |
-| Resource Access | Which target resources those tokens may access. |
-| Grantable Scopes | Maximum operations tokens may request. |
-| Default Scopes | Operations granted when the request omits `scope`. |
-
-For the REST build-read example below, set **Resource Access > Pipelines** to
-**Selected**, and select only the target pipeline(s) whose builds the job needs
-to read. These can differ from the source pipeline in the trust policy.
-Trusting a source pipeline does not automatically grant it resource access.
-Leave teams, clusters, and test suites at **None** unless separately required.
-
-Set **Grantable Scopes** to `read_builds`. Set **Default Scopes** to
-`read_builds` if requests without an explicit scope should work; the example
-requests it explicitly. `read_pipelines` alone is not sufficient for this build
-read. Avoid organization-administration scopes: resource grants do not restrict
-those scopes to selected pipelines.
-
-Set an appropriate **Maximum token lifetime** (30-3600 seconds), and consider
-the identity's exchange and token-usage IP allowlists. Save the identity;
-resource access starts at **None**, not implicit organization-wide access.
-
-## Usage
-
-Run this step in the trusted source pipeline on `main`. Replace the client ID,
-audience, organization slug, and target pipeline slug. The explicit `audience`
-overrides the Elastic-specific default and must exactly match the workload
-identity's configured audience.
+Exports the token as `BUILDKITE_API_TOKEN`:
 
 ```yaml
 steps:
   - label: "Read target pipeline builds"
     key: read-target-builds
     command: |
-      curl --fail --silent --show-error \
-        -H "Authorization: Bearer $$BUILDKITE_TOKEN_SECRET" \
-        "https://api.buildkite.com/v2/organizations/YOUR_ORG_SLUG/pipelines/TARGET_PIPELINE_SLUG/builds"
+      printf 'Authorization: Bearer %s\n' "$$BUILDKITE_API_TOKEN" |
+        curl --fail --silent --show-error -H @- \
+          "https://api.buildkite.com/v2/organizations/YOUR_ORG_SLUG/pipelines/TARGET_PIPELINE_SLUG/builds"
+    plugins:
+      - elastic/buildkite-auth#v0.1.0:
+          client-id: "YOUR_WORKLOAD_IDENTITY_CLIENT_ID"
+          scope: "read_builds"
+```
+
+The default `audience` is Elastic's Buildkite organization. For any other
+organization or audience, also set `audience`.
+
+`$$` defers expansion until the command runs instead of during pipeline upload;
+in a checked-in script use `$BUILDKITE_API_TOKEN`. Piping the header into
+`curl -H @-` keeps the token out of process arguments.
+
+### Existing `BUILDKITE_TOKEN_SECRET` consumers
+
+Use `env-var` to keep a legacy variable name, with every option set explicitly:
+
+```yaml
+steps:
+  - label: "Read target pipeline builds"
+    key: read-target-builds
+    command: .buildkite/scripts/read-target-builds.sh # reads $BUILDKITE_TOKEN_SECRET
     plugins:
       - elastic/buildkite-auth#v0.1.0:
           client-id: "YOUR_WORKLOAD_IDENTITY_CLIENT_ID"
@@ -126,94 +53,235 @@ steps:
           env-var: BUILDKITE_TOKEN_SECRET
 ```
 
-`$$` defers variable expansion until the job command runs instead of expanding
-it during pipeline upload. In a checked-in shell script, use the normal
-`$BUILDKITE_TOKEN_SECRET` form. Omit `env-var` to export `BUILDKITE_API_TOKEN`
-instead. The plugin exports only the configured variable, not both names.
+The plugin exports only the configured variable, not `BUILDKITE_API_TOKEN` as
+well. Renaming the variable does not remove existing token fetches that run
+before the plugin; see [Migrating from a stored token](#migrating-from-a-stored-token).
 
 ## Configuration
 
-The [plugin schema](plugin.yml) defines the accepted options; runtime defaults
-and validation are in [hooks/pre-command](hooks/pre-command).
+The [schema](plugin.yml) rejects unknown options. The
+[hook](hooks/pre-command) applies the defaults and validates values again.
 
-| Option | Required | Default | Description |
-| --- | --- | --- | --- |
-| `client-id` | Yes | None | Non-empty workload identity Client ID. |
-| `audience` | No | `https://api.buildkite.com/v2/organizations/e0f3970e-3a75-4621-919f-e6c773e2bb12` | OIDC audience for Elastic's Buildkite organization. Override for any identity with a different audience, including identities in another organization. |
-| `scope` | No | Omitted | Space-separated requested API scopes, restricted to the identity's grantable scopes. When empty or omitted, Buildkite uses the identity's default scopes. |
-| `lifetime` | No | `3600` | Requested OIDC token lifetime in seconds, an integer from 1 to 3600. Not a guaranteed API token lifetime. |
-| `env-var` | No | `BUILDKITE_API_TOKEN` | Export destination; must match `^[A-Za-z_][A-Za-z0-9_]*$`. Use `BUILDKITE_TOKEN_SECRET` for existing consumers of that name. |
+### `client-id` (required, string)
 
-Unknown configuration keys are rejected by the schema.
+The workload identity's **Client ID**. Must be non-empty. Not a secret.
+
+### `audience` (optional, string)
+
+The OIDC audience requested from the agent. Must exactly match the workload
+identity's **OIDC audience**. Not a secret.
+
+Default: `https://api.buildkite.com/v2/organizations/e0f3970e-3a75-4621-919f-e6c773e2bb12`
+(Elastic's Buildkite organization).
+
+### `scope` (optional, string)
+
+Space-separated API scopes to request, for example `read_builds read_pipelines`.
+Must be a subset of the identity's **Grantable Scopes**.
+
+Default: omitted. When omitted or empty, Buildkite grants the identity's
+**Default Scopes**.
+
+### `lifetime` (optional, integer)
+
+Requested OIDC token lifetime in seconds, from `1` to `3600`. This is not a
+guaranteed API token lifetime; see [Token lifetime](#token-lifetime).
+
+Default: `3600`.
+
+### `env-var` (optional, string)
+
+Name of the environment variable to export the API token as. Must match
+`^[A-Za-z_][A-Za-z0-9_]*$`.
+
+Default: `BUILDKITE_API_TOKEN`.
+
+## Requirements
+
+- WIF enabled for your Buildkite organization. It is currently an Enterprise
+  **private preview**; contact Buildkite Support for access.
+- A dedicated, administrator-created Buildkite workload identity with
+  **Provider: Buildkite Agents**.
+- Bash, `curl`, `jq`, and `buildkite-agent` on the agent's hook `PATH`. The
+  agent must support `oidc request-token` with `--audience` and `--lifetime`,
+  and `redactor add --format none`.
+- Network access from the agent to the Buildkite agent API and
+  `https://buildkite.com/oauth/token`, and from the command to
+  `https://api.buildkite.com`. Any identity IP allowlists must permit both the
+  token exchange and API usage.
+
+## Administrator setup
+
+The plugin does not create workload identities, grant access, or revoke old
+credentials. An organization administrator configures these in
+[Workload Identities](https://buildkite.com/organizations/~/workload-identities).
+
+### Trust the source job
+
+Create a workload identity with **Provider: Buildkite Agents** and issuer
+`https://agent.buildkite.com`. Copy its **Client ID** and **OIDC audience** into
+the plugin configuration.
+
+Restrict the trust policy to the pipeline that **runs the consuming job** (the
+source pipeline), its intended branch, and step. For the `read-target-builds`
+step on `main`, use this OIDC subject with your organization and source
+pipeline slugs:
+
+```text
+organization:YOUR_ORG_SLUG:pipeline:SOURCE_PIPELINE_SLUG:ref:refs/heads/main:commit:*:step:read-target-builds
+```
+
+In **Claims**, require the source organization's UUID:
+
+```json
+{
+  "organization_id": "00000000-0000-4000-8000-000000000001"
+}
+```
+
+In **Claim conditions**, also require the source pipeline's UUID, branch, and
+step key:
+
+```text
+claims.pipeline_id == "00000000-0000-4000-8000-000000000002"
+  && claims.build_branch == "main"
+  && claims.step_key == "read-target-builds"
+```
+
+The UUIDs are placeholders. Prefer immutable IDs over slugs, which can be
+renamed and reused. All Buildkite organizations share the agent issuer, so
+Buildkite requires `organization_id` or `organization_slug` in **Claims**. Do
+not remove that restriction or broaden the subject to every pipeline. Protect
+the source pipeline's code and configuration from untrusted changes.
+
+The subject above assumes the agent's default compound OIDC subject; do not
+override it with `BUILDKITE_OIDC_TOKEN_SUBJECT_CLAIM`. The plugin does not
+request optional claims such as `queue_key`, so do not require them.
+
+### Grant access to target resources
+
+| Setting | What it controls |
+| --- | --- |
+| Trust policy | Which source jobs may mint tokens. |
+| Resource Access | Which target resources those tokens may access. |
+| Grantable Scopes | Maximum operations tokens may request. |
+| Default Scopes | Operations granted when the request omits `scope`. |
+
+Trusting a source pipeline does not grant it access to any resources. For the
+build-read example, set **Resource Access > Pipelines** to **Selected** and
+select only the target pipelines whose builds the job reads; these can differ
+from the source pipeline. Leave teams, clusters, and test suites at **None**
+unless required.
+
+Set **Grantable Scopes** to `read_builds`, and **Default Scopes** to
+`read_builds` if requests without `scope` should work. `read_pipelines` alone
+does not allow reading builds. Avoid organization-administration scopes:
+resource grants do not restrict them to selected pipelines.
+
+Set an appropriate **Maximum token lifetime** (30–3600 seconds) and review the
+identity's exchange and token-usage IP allowlists. Resource access starts at
+**None**, not implicit organization-wide access.
+
+## Usage with the Docker plugin
+
+The token is exported to the agent's job environment, not into containers.
+With the [Docker plugin](https://github.com/buildkite-plugins/docker-buildkite-plugin),
+pass the variable **by name** with `environment`:
+
+```yaml
+steps:
+  - label: "Read target pipeline builds in Docker"
+    key: read-target-builds
+    command: >-
+      printf 'Authorization: Bearer %s\n' "$$BUILDKITE_API_TOKEN" |
+      curl --fail --silent --show-error -H @-
+      "https://api.buildkite.com/v2/organizations/YOUR_ORG_SLUG/pipelines/TARGET_PIPELINE_SLUG/builds"
+    plugins:
+      - elastic/buildkite-auth#v0.1.0:
+          client-id: "YOUR_WORKLOAD_IDENTITY_CLIENT_ID"
+          scope: "read_builds"
+      - docker#v5.14.0:
+          image: "YOUR_IMAGE_WITH_SH_AND_CURL"
+          environment:
+            - BUILDKITE_API_TOKEN
+```
+
+The Docker plugin runs as the job's command, after this plugin's
+`pre-command` hook, and turns `BUILDKITE_API_TOKEN` into `--env
+BUILDKITE_API_TOKEN`, so Docker reads the value from the environment. Do not use
+the `NAME=value` form, which places the token in the logged `docker run`
+arguments. `propagate-environment: true` alone does not pass the token, because
+it only includes pipeline variables, not variables exported by hooks. If you
+set `env-var`, list that name instead.
 
 ## Lifecycle and limitations
 
-The plugin runs at **plugin `pre-command`**, requests one OIDC token, exchanges
-it once at `https://buildkite.com/oauth/token`, registers the returned API token
-with the agent redactor, and exports it into the job command's environment.
-It fails the hook on OIDC, exchange, invalid-token, or redaction-registration
-failure rather than deliberately falling back to a stored credential.
+### Hook order
 
-It mints **one API token per job at pre-command and does not refresh it**.
-The token expires no later than its OIDC token or the identity's maximum token
-lifetime. Consequently, its actual lifetime can be **less than the requested
-3600 seconds**, including time spent exchanging it. The plugin does not send
-an API `expires_in` request or expose the response's expiry as an output.
-Long-running commands must finish API usage before expiry or use a separately
-implemented renewal mechanism. Every fresh exchange, including a retry, needs a
-**new OIDC token**; Buildkite accepts an agent OIDC token only once.
+The plugin runs in the **plugin `pre-command`** phase. It requests one OIDC
+token, exchanges it at `https://buildkite.com/oauth/token`, registers the API
+token with the agent's log redactor, and then exports it. The token is
+available to the command, later plugin `pre-command` hooks, and later phases.
 
-WIF supports only the [documented REST API subset and scopes](https://buildkite.com/docs/apis/workload-identity-federation/supported-endpoints),
-not every endpoint a personal token can access. It does not support GraphQL,
-Package Registries, secrets, or workload identity management. Check every
-consumer's endpoints before migrating.
+Agent and repository `pre-command` hooks run **before** plugin `pre-command`
+hooks, so they cannot use the token and cannot detect that this plugin will
+replace an existing variable. Any token they fetch is still fetched.
 
-The **client ID and audience are non-secret** and may be committed in pipeline
-configuration. The OIDC assertion and **exported API token are sensitive**.
-Do not print them, enable shell tracing around their use, or place them in
-artifacts. Redaction reduces accidental log exposure; it does not prevent
-commands in the job from reading the exported token.
+The hook fails the job on any OIDC, exchange, invalid-token, or redaction
+error. It never falls back to a stored credential.
 
-## Migrating `BUILDKITE_TOKEN_SECRET` consumers
+### Token lifetime
 
-Setting `env-var: BUILDKITE_TOKEN_SECRET` lets an existing script read the WIF
-token under its existing variable name. It does **not** by itself eliminate
-Vault access or revoke the old API token.
+The plugin mints **one token per job and does not refresh it**. The token
+expires no later than its OIDC token or the identity's **Maximum token
+lifetime**, so it can last **less than the requested `lifetime`**, including
+time already spent on the exchange. The plugin does not request an API `expires_in` or expose the
+expiry. Long-running commands must finish API usage before expiry or implement
+their own renewal. Each new exchange needs a **new OIDC token**; Buildkite
+accepts an agent OIDC token only once.
 
-In particular, observability-robots' `.buildkite/hooks/pre-command`
-unconditionally fetches a token from Vault **before plugin pre-command**, and
-separately replaces it in the apm-server case. Adding this plugin alone still
-performs those reads and still depends on them succeeding, even though the
-plugin subsequently replaces the environment variable for the command.
+### Supported APIs
 
-1. Inventory the intended jobs' API calls, target pipelines, durations, and
-   existing token consumers. Verify WIF supports those endpoints and grant only
-   the necessary resources and scopes.
-2. Have an administrator create and restrict the separate Buildkite Agents
-   identity. Add the plugin to selected jobs with
-   `env-var: BUILDKITE_TOKEN_SECRET`.
-3. Deliberately adjust the existing Vault reads for migrated jobs, including
-   the unconditional read and the apm-server-specific replacement. Preserve
-   reads needed by other consumers until those consumers are independently
-   inventoried and migrated. Account for repository and plugin hook order;
-   do not rely on a variable exported later to skip an earlier hook.
-4. Validate exchanges and actual API operations in the approved environment,
-   confirm no migrated job still reads Vault for this token, and confirm
-   unmigrated consumers still work. Only revoke the old stored credential
-   after the migration and all remaining dependencies have been validated.
+WIF tokens work only with the
+[documented REST API subset and scopes](https://buildkite.com/docs/apis/workload-identity-federation/supported-endpoints).
+They do **not** work with GraphQL, Package Registries, secrets, or workload
+identity management. Check every consumer's endpoints before migrating.
 
-This repository provides the plugin and migration guidance, not a production
-rollout or workload identity provisioning.
+### Security
+
+The `client-id` and `audience` are **not secrets** and may be committed. The
+OIDC token and the **exported API token are secrets**: do not print them,
+enable shell tracing around their use, pass them as command-line arguments, or
+store them in artifacts. Redaction reduces accidental log exposure; it does not
+stop commands in the job from reading the token.
+
+## Migrating from a stored token
+
+Setting `env-var: BUILDKITE_TOKEN_SECRET` lets existing scripts read the WIF
+token under the old name. It does **not** stop earlier hooks from fetching the
+stored token, nor revoke it. To migrate:
+
+1. Inventory each job's API calls, target pipelines, and durations, and confirm
+   WIF supports those endpoints.
+2. Have an administrator create a restricted identity with only the necessary
+   resources and scopes, then add the plugin to the selected jobs.
+3. Remove or skip the stored-token fetches for migrated jobs, keeping those that
+   unmigrated consumers still need. Account for [hook order](#hook-order).
+4. Validate the API calls, then revoke the stored token only after every
+   remaining consumer has been migrated.
+
+The [observability-robots migration guide](docs/migrating-observability-robots.md)
+walks through these steps for that repository's Vault-based hook.
 
 ## References
 
 - [Buildkite Agents WIF setup](https://buildkite.com/docs/apis/workload-identity-federation/buildkite-agents)
 - [Workload identity configuration and token lifetime](https://buildkite.com/docs/apis/workload-identity-federation)
+- [Supported endpoints and scopes](https://buildkite.com/docs/apis/workload-identity-federation/supported-endpoints)
 - [OIDC command and claims](https://buildkite.com/docs/agent/cli/reference/oidc)
 
 ## Contributing
 
-This README covers using the plugin. To develop it, including local checks,
-adding options, testing, the end-to-end pipeline test, and pull request labels,
-see [CONTRIBUTING.md](CONTRIBUTING.md). Maintainers publishing a version should
-follow the [release process](docs/RELEASE.md).
+To develop the plugin, including local checks, adding options, tests, and pull
+request labels, see [CONTRIBUTING.md](CONTRIBUTING.md). Maintainers publishing
+a version should follow the [release process](docs/RELEASE.md).

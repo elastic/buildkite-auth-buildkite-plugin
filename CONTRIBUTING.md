@@ -46,8 +46,11 @@ Keep these in sync for every option change:
    [`tests/unit/pre-command.bats`](tests/unit/pre-command.bats) for the new
    behaviour and its invalid inputs. Update the `stub_oidc`/`stub_exchange`
    expectations if the `buildkite-agent` or `curl` arguments change.
-4. **Docs** — update the README **Configuration** table and, if relevant,
-   **Usage**, **Lifecycle and limitations**, or **Administrator setup**.
+4. **Docs** — update the option's entry in the README **Configuration**
+   section (type, required/optional, default, and constraints) and, if
+   relevant, **Quick start**, **Lifecycle and limitations**, or
+   **Administrator setup**. Keep plugin references in README examples as
+   `elastic/buildkite-auth#vX.Y.Z` so the release workflow can bump them.
 
 Changing a default, removing or renaming an option, or changing the exported
 variable is a breaking change (`changelog:breaking`).
