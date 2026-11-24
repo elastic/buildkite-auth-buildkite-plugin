@@ -1,4 +1,4 @@
-FROM buildkite/plugin-tester:v4.3.0@sha256:86c728d8526e22f5d26c1b65e2cae1dfb2d9767fe24d560563895d051b258c84
+FROM buildkite/plugin-tester:v4.4.0@sha256:227f1ca092928541e52dc82a4af51943bc3e69451fe7eb4473e484f66e3a4447
 
 RUN adduser --disabled-password --gecos "" plugin-tester
 USER plugin-tester
