@@ -169,7 +169,9 @@ stub_redactor() {
     'RateLimit-WorkloadIdentityTokenExchange-Reset: 1e2\r\n' \
     'RateLimit-WorkloadIdentityTokenExchange-Reset: assertion-secret api-secret\r\n' \
     'RateLimit-WorkloadIdentityTokenExchange-Reset: 1 2\r\n' \
-    'RateLimit-WorkloadIdentityTokenExchange-Reset: 1\r\nratelimit-workloadidentitytokenexchange-reset: 1\r\n'; do
+    'RateLimit-WorkloadIdentityTokenExchange-Reset: 1\r\nratelimit-workloadidentitytokenexchange-reset: 1\r\n' \
+    'RateLimit-WorkloadIdentityTokenExchange-Reset: 1\r\nRateLimit-WorkloadIdentityTokenExchange-Reset:\r\n' \
+    'RateLimit-WorkloadIdentityTokenExchange-Reset:\r\nRateLimit-WorkloadIdentityTokenExchange-Reset: 1\r\n'; do
     stub_oidc
     stub_http_exchange 429 "$headers"
     run_retry_hook
