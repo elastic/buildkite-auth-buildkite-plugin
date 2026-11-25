@@ -218,7 +218,7 @@ set `env-var`, list that name instead.
 
 ### Hook order
 
-The plugin runs in the **plugin `pre-command`** phase. It requests one OIDC
+The plugin runs in the **plugin `pre-command`** phase. It requests an OIDC
 token, exchanges it at `https://buildkite.com/oauth/token`, registers the API
 token with the agent's log redactor, and then exports it. The token is
 available to the command, later plugin `pre-command` hooks, and later phases.
@@ -229,6 +229,28 @@ replace an existing variable. Any token they fetch is still fetched.
 
 The hook fails the job on any OIDC, exchange, invalid-token, or redaction
 error. It never falls back to a stored credential.
+
+### Exchange rate limits
+
+Buildkite allows up to 50 token exchanges per minute for each workload identity.
+If several jobs start at once and hit that limit, Buildkite returns HTTP `429`
+and tells the plugin how long to wait in the
+`RateLimit-WorkloadIdentityTokenExchange-Reset` header. See Buildkite's
+[rate limit documentation](https://buildkite.com/docs/apis/workload-identity-federation#exchange-an-oidc-token-rate-limit).
+
+The plugin waits for that interval plus a random 1–3 seconds, then tries again
+with a fresh OIDC token. It retries up to three times, with no more than five
+minutes of waiting in total, including the random delays.
+
+If the retry or wait limit is reached, or the reset header is missing, invalid,
+or duplicated, the hook fails rather than guessing how long to wait. It also
+fails if it cannot reliably determine the HTTP status or headers. Other HTTP
+errors and network failures are not retried.
+
+Each exchange has a 10-second connection timeout and a 30-second total timeout.
+These exchange timeouts are separate from the five-minute waiting limit. The
+plugin does not set a timeout for the agent's OIDC token request, so the limit
+does not bound the hook's total runtime.
 
 ### Token lifetime
 

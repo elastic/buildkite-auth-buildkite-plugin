@@ -22,16 +22,8 @@ if [[ ! "$lifetime" =~ ^[1-9][0-9]{0,3}$ ]] || (( lifetime > 3600 )); then
   exit 1
 fi
 
-echo "~~~ :buildkite: Requesting OIDC token"
-if ! oidc_token=$(BUILDKITE_AGENT_DEBUG_HTTP=false BUILDKITE_AGENT_OIDC_REQUEST_TOKEN_SKIP_TOKEN_REDACTION=false \
-  buildkite-agent oidc request-token --audience "$audience" --lifetime "$lifetime" 2>/dev/null) || [[ -z "$oidc_token" ]]; then
-  echo "buildkite-auth: failed to request an OIDC token" >&2
-  exit 1
-fi
-
-echo "~~~ :buildkite: Exchanging OIDC token for an API token"
 curl_args=(
-  -q --silent --show-error --fail
+  -q --silent --show-error --fail --connect-timeout 10 --max-time 30 --dump-header - --write-out '\n%{http_code}'
   --data-urlencode "grant_type=client_credentials"
   --data-urlencode "client_id=$client_id"
   --data-urlencode "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
@@ -40,11 +32,92 @@ curl_args=(
 if [[ -n "$scope" ]]; then
   curl_args+=(--data-urlencode "scope=$scope")
 fi
-if ! response=$(printf '%s' "$oidc_token" | curl "${curl_args[@]}" https://buildkite.com/oauth/token 2>/dev/null); then
-  echo "buildkite-auth: token exchange failed" >&2
-  exit 1
-fi
-unset oidc_token
+retries=0
+total_wait=0
+while true; do
+  echo "~~~ :buildkite: Requesting OIDC token"
+  if ! oidc_token=$(BUILDKITE_AGENT_DEBUG_HTTP=false BUILDKITE_AGENT_OIDC_REQUEST_TOKEN_SKIP_TOKEN_REDACTION=false \
+    buildkite-agent oidc request-token --audience "$audience" --lifetime "$lifetime" 2>/dev/null) || [[ -z "$oidc_token" ]]; then
+    echo "buildkite-auth: failed to request an OIDC token" >&2
+    exit 1
+  fi
+
+  echo "~~~ :buildkite: Exchanging OIDC token for an API token"
+  curl_status=0
+  response=$(printf '%s' "$oidc_token" | curl "${curl_args[@]}" https://buildkite.com/oauth/token 2>/dev/null) || curl_status=$?
+  unset oidc_token
+  if (( curl_status != 0 && curl_status != 22 )); then
+    echo "buildkite-auth: token exchange failed" >&2
+    exit 1
+  fi
+
+  http_status="${response##*$'\n'}"
+  response="${response%$'\n'*}"
+  if [[ ! "$http_status" =~ ^[1-5][0-9]{2}$ ]]; then
+    echo "buildkite-auth: token exchange failed to determine HTTP status" >&2
+    exit 1
+  fi
+  if [[ "$http_status" != 429 ]] && { (( curl_status != 0 )) || [[ "$http_status" != 2?? ]]; }; then
+    echo "buildkite-auth: token exchange failed" >&2
+    exit 1
+  fi
+
+  # curl can include proxy CONNECT and informational headers before the final block.
+  header_status=""
+  headers=""
+  while [[ "$response" == HTTP/* && "$response" == *$'\r\n\r\n'* ]]; do
+    headers="${response%%$'\r\n\r\n'*}"
+    response="${response#*$'\r\n\r\n'}"
+    status_line="${headers%%$'\r\n'*}"
+    if [[ ! "$status_line" =~ ^HTTP/[0-9.]+[[:space:]]([0-9]{3})([[:space:]]|$) ]]; then
+      echo "buildkite-auth: token exchange returned invalid HTTP headers" >&2
+      exit 1
+    fi
+    header_status="${BASH_REMATCH[1]}"
+  done
+  if [[ "$header_status" != "$http_status" ]]; then
+    echo "buildkite-auth: token exchange returned missing or inconsistent HTTP headers" >&2
+    exit 1
+  fi
+  if [[ "$http_status" != 429 ]]; then
+    break
+  fi
+  unset response
+
+  if (( retries >= 3 )); then
+    echo "buildkite-auth: token exchange rate-limit retry budget exhausted" >&2
+    exit 1
+  fi
+  if ! reset=$(printf '%s' "$headers" | jq -Rser '
+    split("\r\n") |
+    map(select(test("^ratelimit-workloadidentitytokenexchange-reset:"; "i"))) |
+    select(length == 1) | .[0] | sub("^[^:]*:[ \t]*"; "") | sub("[ \t]*$"; "") |
+    select(test("^[0-9]+$"))
+  ' 2>/dev/null); then
+    echo "buildkite-auth: token exchange rate limit has a missing or invalid reset header" >&2
+    exit 1
+  fi
+  # Strip leading zeros before checking size, avoiding octal parsing and overflow.
+  reset="${reset#"${reset%%[!0]*}"}"
+  reset="${reset:-0}"
+  if (( ${#reset} > 3 )); then
+    echo "buildkite-auth: token exchange rate-limit wait budget exceeded" >&2
+    exit 1
+  fi
+  wait_seconds=$((10#$reset + 1 + RANDOM % 3))
+  if (( total_wait + wait_seconds > 300 )); then
+    echo "buildkite-auth: token exchange rate-limit wait budget exceeded" >&2
+    exit 1
+  fi
+  echo "buildkite-auth: token exchange rate limited; retrying in ${wait_seconds}s" >&2
+  if ! sleep "$wait_seconds" 2>/dev/null; then
+    echo "buildkite-auth: token exchange rate-limit wait failed" >&2
+    exit 1
+  fi
+  total_wait=$((total_wait + wait_seconds))
+  retries=$((retries + 1))
+done
+unset headers
 
 if ! access_token=$(printf '%s' "$response" | jq -ser '
   select(length == 1) | .[0].access_token |
