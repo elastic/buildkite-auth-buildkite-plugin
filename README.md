@@ -23,7 +23,7 @@ steps:
         curl --fail --silent --show-error -H @- \
           "https://api.buildkite.com/v2/organizations/YOUR_ORG_SLUG/pipelines/TARGET_PIPELINE_SLUG/builds"
     plugins:
-      - elastic/buildkite-auth#v0.1.0:
+      - elastic/buildkite-auth#v0.1.1:
           client-id: "YOUR_WORKLOAD_IDENTITY_CLIENT_ID"
           scope: "read_builds"
 ```
@@ -45,7 +45,7 @@ steps:
     key: read-target-builds
     command: .buildkite/scripts/read-target-builds.sh # reads $BUILDKITE_TOKEN_SECRET
     plugins:
-      - elastic/buildkite-auth#v0.1.0:
+      - elastic/buildkite-auth#v0.1.1:
           client-id: "YOUR_WORKLOAD_IDENTITY_CLIENT_ID"
           audience: "YOUR_WORKLOAD_IDENTITY_AUDIENCE"
           scope: "read_builds"
@@ -197,7 +197,7 @@ steps:
       curl --fail --silent --show-error -H @-
       "https://api.buildkite.com/v2/organizations/YOUR_ORG_SLUG/pipelines/TARGET_PIPELINE_SLUG/builds"
     plugins:
-      - elastic/buildkite-auth#v0.1.0:
+      - elastic/buildkite-auth#v0.1.1:
           client-id: "YOUR_WORKLOAD_IDENTITY_CLIENT_ID"
           scope: "read_builds"
       - docker#v5.14.0:
